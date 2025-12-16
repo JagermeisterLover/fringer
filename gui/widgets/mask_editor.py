@@ -85,6 +85,43 @@ class MaskEditor(QWidget):
         self.mask_visible = visible
         self.update()
 
+    def get_display_transform(self):
+        """Calculate transformation from image coordinates to widget coordinates."""
+        if self.q_image is None or self.image is None:
+            return 1.0, 0, 0
+
+        # Get original image size
+        img_h, img_w = self.image.shape[:2]
+
+        # Calculate scaled pixmap size
+        pixmap = QPixmap.fromImage(self.q_image)
+        scaled_pixmap = pixmap.scaled(
+            self.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+
+        # Calculate scale factor
+        scale = scaled_pixmap.width() / img_w
+
+        # Calculate offset (centering)
+        offset_x = (self.width() - scaled_pixmap.width()) // 2
+        offset_y = (self.height() - scaled_pixmap.height()) // 2
+
+        return scale, offset_x, offset_y
+
+    def image_to_widget(self, x, y):
+        """Convert image coordinates to widget coordinates."""
+        scale, offset_x, offset_y = self.get_display_transform()
+        return x * scale + offset_x, y * scale + offset_y
+
+    def widget_to_image(self, x, y):
+        """Convert widget coordinates to image coordinates."""
+        scale, offset_x, offset_y = self.get_display_transform()
+        if scale == 0:
+            return x, y
+        return (x - offset_x) / scale, (y - offset_y) / scale
+
     def paintEvent(self, event):
         """Paint the widget."""
         painter = QPainter(self)
@@ -104,6 +141,13 @@ class MaskEditor(QWidget):
             painter.drawPixmap(x, y, scaled_pixmap)
 
         if self.mask_visible and self.image is not None:
+            scale, offset_x, offset_y = self.get_display_transform()
+
+            # Convert image coordinates to widget coordinates
+            center_x_widget, center_y_widget = self.image_to_widget(self.center_x, self.center_y)
+            outer_r_widget = self.outer_radius * scale
+            inner_r_widget = self.inner_radius * scale
+
             # Draw outer circle
             pen_outer = QPen(QColor(*MASK_COLOR_OUTER))
             if self.hover_element == 'outer':
@@ -113,10 +157,10 @@ class MaskEditor(QWidget):
             painter.setPen(pen_outer)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawEllipse(
-                int(self.center_x - self.outer_radius),
-                int(self.center_y - self.outer_radius),
-                int(self.outer_radius * 2),
-                int(self.outer_radius * 2)
+                int(center_x_widget - outer_r_widget),
+                int(center_y_widget - outer_r_widget),
+                int(outer_r_widget * 2),
+                int(outer_r_widget * 2)
             )
 
             # Draw inner circle
@@ -128,10 +172,10 @@ class MaskEditor(QWidget):
                     pen_inner.setWidth(CIRCLE_EDGE_WIDTH)
                 painter.setPen(pen_inner)
                 painter.drawEllipse(
-                    int(self.center_x - self.inner_radius),
-                    int(self.center_y - self.inner_radius),
-                    int(self.inner_radius * 2),
-                    int(self.inner_radius * 2)
+                    int(center_x_widget - inner_r_widget),
+                    int(center_y_widget - inner_r_widget),
+                    int(inner_r_widget * 2),
+                    int(inner_r_widget * 2)
                 )
 
             # Draw center crosshair
@@ -140,27 +184,30 @@ class MaskEditor(QWidget):
             painter.setPen(pen_center)
             cross_size = 10
             painter.drawLine(
-                int(self.center_x - cross_size), int(self.center_y),
-                int(self.center_x + cross_size), int(self.center_y)
+                int(center_x_widget - cross_size), int(center_y_widget),
+                int(center_x_widget + cross_size), int(center_y_widget)
             )
             painter.drawLine(
-                int(self.center_x), int(self.center_y - cross_size),
-                int(self.center_x), int(self.center_y + cross_size)
+                int(center_x_widget), int(center_y_widget - cross_size),
+                int(center_x_widget), int(center_y_widget + cross_size)
             )
 
     def mousePressEvent(self, event):
         """Handle mouse press."""
         if event.button() == Qt.MouseButton.LeftButton:
             pos = event.pos()
-            x, y = pos.x(), pos.y()
+            x_widget, y_widget = pos.x(), pos.y()
 
-            # Check which element is clicked
-            distance_from_center = np.sqrt((x - self.center_x)**2 + (y - self.center_y)**2)
+            # Convert widget coordinates to image coordinates
+            x_img, y_img = self.widget_to_image(x_widget, y_widget)
+
+            # Check which element is clicked (in image coordinates)
+            distance_from_center = np.sqrt((x_img - self.center_x)**2 + (y_img - self.center_y)**2)
 
             # Check if clicking on center
             if distance_from_center < 15:  # 15 pixel tolerance
                 self.dragging_element = 'center'
-                self.drag_offset = QPoint(int(self.center_x - x), int(self.center_y - y))
+                self.drag_offset = QPoint(int(self.center_x - x_img), int(self.center_y - y_img))
             # Check if clicking on outer circle edge
             elif abs(distance_from_center - self.outer_radius) < 10:  # 10 pixel tolerance
                 self.dragging_element = 'outer'
@@ -171,11 +218,14 @@ class MaskEditor(QWidget):
     def mouseMoveEvent(self, event):
         """Handle mouse move."""
         pos = event.pos()
-        x, y = pos.x(), pos.y()
+        x_widget, y_widget = pos.x(), pos.y()
+
+        # Convert widget coordinates to image coordinates
+        x_img, y_img = self.widget_to_image(x_widget, y_widget)
 
         if self.dragging_element is None:
-            # Update hover state
-            distance_from_center = np.sqrt((x - self.center_x)**2 + (y - self.center_y)**2)
+            # Update hover state (in image coordinates)
+            distance_from_center = np.sqrt((x_img - self.center_x)**2 + (y_img - self.center_y)**2)
 
             if abs(distance_from_center - self.outer_radius) < 10:
                 self.hover_element = 'outer'
@@ -186,18 +236,25 @@ class MaskEditor(QWidget):
 
             self.update()
         else:
-            # Handle dragging
+            # Handle dragging (in image coordinates)
             if self.dragging_element == 'center':
                 # Move center
-                self.center_x = x + self.drag_offset.x()
-                self.center_y = y + self.drag_offset.y()
+                self.center_x = x_img + self.drag_offset.x()
+                self.center_y = y_img + self.drag_offset.y()
+
+                # Clamp to image bounds
+                if self.image is not None:
+                    h, w = self.image.shape[:2]
+                    self.center_x = max(0, min(w, self.center_x))
+                    self.center_y = max(0, min(h, self.center_y))
+
             elif self.dragging_element == 'outer':
                 # Resize outer circle
-                distance = np.sqrt((x - self.center_x)**2 + (y - self.center_y)**2)
+                distance = np.sqrt((x_img - self.center_x)**2 + (y_img - self.center_y)**2)
                 self.outer_radius = max(self.inner_radius + 10, distance)
             elif self.dragging_element == 'inner':
                 # Resize inner circle
-                distance = np.sqrt((x - self.center_x)**2 + (y - self.center_y)**2)
+                distance = np.sqrt((x_img - self.center_x)**2 + (y_img - self.center_y)**2)
                 self.inner_radius = max(0, min(distance, self.outer_radius - 10))
 
             # Emit signal
