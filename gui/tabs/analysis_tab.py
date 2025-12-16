@@ -18,7 +18,7 @@ from core.zernike import ZernikeFitter
 from core.psf_calculator import calculate_psf, calculate_strehl_ratio
 from algorithms.metrics import calculate_wavefront_metrics, calculate_phase_metrics, format_metric_value
 from gui.widgets.wavefront_3d_viewer import Wavefront3DViewer
-from config.settings import DEFAULT_WAVELENGTH, DEFAULT_ZERNIKE_MAX_ORDER
+from config.settings import DEFAULT_WAVELENGTH, DEFAULT_ZERNIKE_MAX_ORDER, DEFAULT_PUPIL_DIAMETER
 
 
 class MatplotlibCanvas(FigureCanvas):
@@ -217,6 +217,7 @@ class AnalysisTab(QWidget):
             self.psf, self.psf_scale = calculate_psf(
                 self.wavefront,
                 wavelength=DEFAULT_WAVELENGTH,
+                pupil_diameter=DEFAULT_PUPIL_DIAMETER,
                 mask=self.mask
             )
 
