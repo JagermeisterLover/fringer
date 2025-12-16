@@ -96,29 +96,25 @@ class Wavefront3DViewer(QWidget):
         if mask_cropped is not None:
             wavefront_display[~mask_cropped.astype(bool)] = np.nan
 
-        # Light smoothing only (reduce noise without losing features)
-        from scipy.ndimage import gaussian_filter
-        # Only smooth the valid region
-        if mask_cropped is not None:
-            # Create a copy for smoothing
-            smooth_input = np.nan_to_num(wavefront_display, nan=0.0)
-            wavefront_smooth = gaussian_filter(smooth_input, sigma=0.5)
-            # Reapply mask
-            wavefront_smooth[~mask_cropped.astype(bool)] = np.nan
-        else:
-            wavefront_smooth = gaussian_filter(wavefront_display, sigma=0.5)
+        # Check for gradient discontinuities before smoothing (indicates wrapped phase)
+        print(f"\nBefore smoothing check:")
+        valid_before = wavefront_display[~np.isnan(wavefront_display)]
+        if len(valid_before) > 0:
+            print(f"  Min: {np.min(valid_before):.3e}, Max: {np.max(valid_before):.3e}")
+            print(f"  Mean: {np.mean(valid_before):.3e}, Std: {np.std(valid_before):.3e}")
 
-        # Downsample if too large (for performance)
+        # NO SMOOTHING - it's destroying the unwrapped data!
+        # Smoothing across boundaries can create artifacts
+        wavefront_smooth = wavefront_display.copy()
+
+        # Downsample if too large (for performance) - use simple slicing instead of zoom
         h, w = wavefront_smooth.shape
         if h > 150 or w > 150:
-            from scipy.ndimage import zoom
-            scale_factor = 150.0 / max(h, w)
-            # Handle NaN during zoom by replacing temporarily
-            temp_data = np.nan_to_num(wavefront_smooth, nan=np.nanmean(wavefront_smooth))
-            wavefront_smooth = zoom(temp_data, scale_factor, order=1)
+            step = max(h, w) // 150 + 1
+            print(f"  Downsampling with step: {step}")
+            wavefront_smooth = wavefront_smooth[::step, ::step]
             if mask_cropped is not None:
-                mask_display = zoom(mask_cropped.astype(float), scale_factor, order=0) > 0.5
-                wavefront_smooth[~mask_display.astype(bool)] = np.nan
+                mask_display = mask_cropped[::step, ::step]
             else:
                 mask_display = None
         else:
