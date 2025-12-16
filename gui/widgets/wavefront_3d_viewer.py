@@ -43,12 +43,35 @@ class Wavefront3DViewer(QWidget):
         if self.surface_plot is not None:
             self.view.removeItem(self.surface_plot)
 
-        # Apply mask and get valid data
+        # Crop to valid region if mask is provided
         if mask is not None:
-            valid = mask.astype(bool)
-            valid_data = wavefront[valid]
+            # Find bounding box of valid mask region
+            rows, cols = np.where(mask.astype(bool))
+            if len(rows) == 0 or len(cols) == 0:
+                return
+
+            row_min, row_max = rows.min(), rows.max() + 1
+            col_min, col_max = cols.min(), cols.max() + 1
+
+            # Add small padding (5% on each side)
+            padding = int(0.05 * max(row_max - row_min, col_max - col_min))
+            row_min = max(0, row_min - padding)
+            row_max = min(wavefront.shape[0], row_max + padding)
+            col_min = max(0, col_min - padding)
+            col_max = min(wavefront.shape[1], col_max + padding)
+
+            # Crop to bounding box
+            wavefront_cropped = wavefront[row_min:row_max, col_min:col_max]
+            mask_cropped = mask[row_min:row_max, col_min:col_max]
         else:
-            valid_data = wavefront.flatten()
+            wavefront_cropped = wavefront
+            mask_cropped = None
+
+        # Get valid data for statistics
+        if mask_cropped is not None:
+            valid_data = wavefront_cropped[mask_cropped.astype(bool)]
+        else:
+            valid_data = wavefront_cropped.flatten()
 
         # Remove NaN values
         valid_data = valid_data[~np.isnan(valid_data)]
@@ -56,11 +79,11 @@ class Wavefront3DViewer(QWidget):
         if len(valid_data) == 0:
             return
 
-        # Remove piston (mean) and optionally tilt for better visualization
+        # Remove piston (mean) for better visualization
         mean_val = np.mean(valid_data)
 
         # Create display array
-        wavefront_display = np.copy(wavefront)
+        wavefront_display = np.copy(wavefront_cropped)
         wavefront_display = wavefront_display - mean_val
 
         # Smooth the wavefront data slightly to reduce noise artifacts
@@ -68,28 +91,34 @@ class Wavefront3DViewer(QWidget):
         wavefront_smooth = gaussian_filter(wavefront_display, sigma=1.0)
 
         # Apply mask for display
-        if mask is not None:
-            wavefront_smooth[~mask.astype(bool)] = np.nan
+        if mask_cropped is not None:
+            wavefront_smooth[~mask_cropped.astype(bool)] = np.nan
 
-        # Downsample if too large (for performance) - use average instead of simple indexing
+        # Downsample if too large (for performance)
         h, w = wavefront_smooth.shape
         if h > 150 or w > 150:
             from scipy.ndimage import zoom
             scale_factor = 150.0 / max(h, w)
             wavefront_smooth = zoom(wavefront_smooth, scale_factor, order=3)
-            if mask is not None:
-                mask_display = zoom(mask.astype(float), scale_factor, order=1) > 0.5
+            if mask_cropped is not None:
+                mask_display = zoom(mask_cropped.astype(float), scale_factor, order=1) > 0.5
             else:
                 mask_display = None
         else:
-            mask_display = mask
+            mask_display = mask_cropped
 
-        # Replace NaN with boundary values for smoother display
+        # Replace NaN with minimum value for smoother display edges
         wavefront_clean = wavefront_smooth.copy()
         if mask_display is not None:
-            # Fill masked regions with edge values instead of zero
-            valid_mean = np.nanmean(wavefront_clean[mask_display.astype(bool)])
-            wavefront_clean[~mask_display.astype(bool)] = valid_mean if not np.isnan(valid_mean) else 0
+            # Get the valid data range
+            valid_clean = wavefront_clean[mask_display.astype(bool)]
+            valid_clean = valid_clean[~np.isnan(valid_clean)]
+            if len(valid_clean) > 0:
+                edge_value = np.min(valid_clean)
+            else:
+                edge_value = 0
+            # Fill masked regions with edge value
+            wavefront_clean[~mask_display.astype(bool)] = edge_value
         wavefront_clean[np.isnan(wavefront_clean)] = 0
 
         # Convert to wavelengths for display (more intuitive than meters)
