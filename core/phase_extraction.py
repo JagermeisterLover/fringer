@@ -70,9 +70,10 @@ def extract_phase_fft(
     # 6. Extract phase
     wrapped_phase = np.arctan2(complex_field.imag, complex_field.real)
 
-    # Apply mask to phase
+    # Apply mask to phase - use NaN for invalid regions instead of 0
+    # This prevents artificial discontinuities that break unwrapping
     if mask is not None:
-        wrapped_phase = wrapped_phase * mask
+        wrapped_phase = np.where(mask.astype(bool), wrapped_phase, np.nan)
 
     return wrapped_phase, fft_shifted
 

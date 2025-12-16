@@ -15,52 +15,66 @@ def unwrap_phase_quality_guided(
     Unwrap phase using quality-guided algorithm.
 
     Args:
-        wrapped_phase: Wrapped phase in range [-π, π]
-        mask: Binary mask defining valid region
+        wrapped_phase: Wrapped phase in range [-π, π] (NaN for invalid regions)
+        mask: Binary mask defining valid region (optional, will be derived from NaN if not provided)
 
     Returns:
         unwrapped_phase: Continuous phase
         quality_map: Quality metric for each pixel
     """
+    # Determine valid regions from NaN values or mask
+    if mask is not None:
+        mask_bool = mask.astype(bool)
+    else:
+        mask_bool = ~np.isnan(wrapped_phase)
+
+    # Fill NaN regions with interpolated values for unwrapping
+    # The unwrapping algorithm needs continuous data to work properly
+    from scipy.ndimage import distance_transform_edt
+
+    wrapped_filled = np.copy(wrapped_phase)
+
+    if np.any(~mask_bool):
+        # Find nearest valid pixel for each invalid pixel
+        # This is better than using mean because it preserves local structure
+        invalid_mask = ~mask_bool
+
+        # Get valid data
+        valid_data = np.copy(wrapped_phase)
+        valid_data[invalid_mask] = 0  # Temporary, will be replaced
+
+        # Use distance transform to find nearest neighbors
+        indices = distance_transform_edt(invalid_mask, return_distances=False, return_indices=True)
+
+        # Fill invalid regions with nearest valid values
+        wrapped_filled[invalid_mask] = wrapped_phase[tuple(indices[:, invalid_mask])]
+
+    # Debug: Check wrapped phase statistics
+    print(f"\nPhase Unwrapping Debug:")
+    if np.any(mask_bool):
+        valid_wrapped = wrapped_phase[mask_bool]
+        valid_wrapped = valid_wrapped[~np.isnan(valid_wrapped)]
+        if len(valid_wrapped) > 0:
+            print(f"  Wrapped range: {np.min(valid_wrapped):.4f} to {np.max(valid_wrapped):.4f} rad")
+            print(f"  Wrapped mean: {np.mean(valid_wrapped):.4f} rad")
+            print(f"  Valid pixels: {len(valid_wrapped)}")
+
+    # Unwrap the filled phase
+    unwrapped = unwrap_phase(wrapped_filled)
+
+    # Debug: Check unwrapped phase statistics
+    if np.any(mask_bool):
+        valid_unwrapped = unwrapped[mask_bool]
+        valid_unwrapped = valid_unwrapped[~np.isnan(valid_unwrapped)]
+        if len(valid_unwrapped) > 0:
+            print(f"  Unwrapped range: {np.min(valid_unwrapped):.4f} to {np.max(valid_unwrapped):.4f} rad")
+            print(f"  Unwrapped span: {np.ptp(valid_unwrapped):.4f} rad ({np.ptp(valid_unwrapped)/(2*np.pi):.2f} waves)")
+
+    # Set invalid regions back to NaN after unwrapping
+    unwrapped[~mask_bool] = np.nan
+
     # Calculate quality map
     quality_map = calculate_phase_quality(wrapped_phase)
-
-    # Unwrap using scikit-image
-    if mask is not None:
-        # Don't set masked region to 0 - this creates artificial discontinuities!
-        # Instead, use the mask parameter of unwrap_phase if available,
-        # or extrapolate into masked regions
-        from scipy.ndimage import binary_erosion, binary_dilation
-
-        # Create a slightly eroded mask to avoid edge issues
-        mask_bool = mask.astype(bool)
-
-        # Fill masked regions with extrapolated values instead of 0
-        # This helps the unwrapping algorithm work correctly
-        wrapped_filled = np.copy(wrapped_phase)
-
-        # Simple inpainting: dilate valid region and copy border values
-        if not np.all(mask_bool):
-            # Get the mean phase in valid region as fallback
-            mean_phase = np.mean(wrapped_phase[mask_bool])
-            wrapped_filled[~mask_bool] = mean_phase
-
-        # Debug: Check wrapped phase statistics
-        print(f"\nPhase Unwrapping Debug:")
-        print(f"  Wrapped range: {np.min(wrapped_phase[mask_bool]):.4f} to {np.max(wrapped_phase[mask_bool]):.4f} rad")
-        print(f"  Wrapped mean: {np.mean(wrapped_phase[mask_bool]):.4f} rad")
-
-        # Unwrap the filled phase
-        unwrapped = unwrap_phase(wrapped_filled)
-
-        # Debug: Check unwrapped phase statistics
-        print(f"  Unwrapped range: {np.nanmin(unwrapped[mask_bool]):.4f} to {np.nanmax(unwrapped[mask_bool]):.4f} rad")
-        print(f"  Unwrapped span: {np.ptp(unwrapped[mask_bool]):.4f} rad ({np.ptp(unwrapped[mask_bool])/(2*np.pi):.2f} waves)")
-
-        # Set invalid regions to NaN after unwrapping
-        unwrapped[~mask_bool] = np.nan
-    else:
-        unwrapped = unwrap_phase(wrapped_phase)
 
     return unwrapped, quality_map
 
@@ -71,13 +85,16 @@ def calculate_phase_quality(wrapped_phase: np.ndarray) -> np.ndarray:
     High quality = low variance in local neighborhood.
 
     Args:
-        wrapped_phase: Wrapped phase array
+        wrapped_phase: Wrapped phase array (may contain NaN)
 
     Returns:
         Quality map (higher = better quality)
     """
+    # Replace NaN with 0 for gradient calculation
+    phase_clean = np.nan_to_num(wrapped_phase, nan=0.0)
+
     # Calculate phase derivatives
-    dy, dx = np.gradient(wrapped_phase)
+    dy, dx = np.gradient(phase_clean)
 
     # Wrap derivatives to [-π, π]
     dy = np.arctan2(np.sin(dy), np.cos(dy))
@@ -89,6 +106,9 @@ def calculate_phase_quality(wrapped_phase: np.ndarray) -> np.ndarray:
 
     # Quality metric (lower variance = higher quality)
     quality = 1.0 / (1.0 + d2x**2 + d2y**2)
+
+    # Set quality to 0 where phase is NaN
+    quality[np.isnan(wrapped_phase)] = 0.0
 
     return quality
 
