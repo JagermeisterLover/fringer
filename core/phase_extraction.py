@@ -67,23 +67,17 @@ def extract_phase_fft(
     # 4. Apply filter
     filtered_fft = fft_shifted * bandpass
 
-    # 5. Inverse FFT (still contains carrier frequency)
-    filtered_fft_unshifted = np.fft.ifftshift(filtered_fft)
+    # 5. CRITICAL: Shift the filtered spectrum to baseband (DC)
+    # This moves the carrier peak from (center+fx, center+fy) to (center, center)
+    # We do this in the shifted frequency space before inverse FFT
+    filtered_fft_shifted_to_dc = np.roll(filtered_fft, (-fy, -fx), axis=(0, 1))
+
+    # 6. Inverse FFT to get baseband complex field
+    filtered_fft_unshifted = np.fft.ifftshift(filtered_fft_shifted_to_dc)
     complex_field = np.fft.ifft2(filtered_fft_unshifted)
 
-    # 6. CRITICAL: Remove carrier frequency in spatial domain
-    # The filtered signal still has carrier fringes exp(2πi(fx*x/w + fy*y/h))
-    # We need to multiply by the conjugate to demodulate
-    y_coords, x_coords = np.ogrid[:h, :w]
-    # Carrier phase ramp in spatial domain
-    carrier_phase = -2.0 * np.pi * (fx * x_coords / w + fy * y_coords / h)
-    demod_factor = np.exp(1j * carrier_phase)
-
-    # Demodulate (remove carrier)
-    complex_field_demod = complex_field * demod_factor
-
-    # 7. Extract phase from demodulated complex field
-    wrapped_phase = np.arctan2(complex_field_demod.imag, complex_field_demod.real)
+    # 7. Extract phase from complex field (now at baseband, no carrier)
+    wrapped_phase = np.arctan2(complex_field.imag, complex_field.real)
 
     # Apply mask to phase - use NaN for invalid regions instead of 0
     # This prevents artificial discontinuities that break unwrapping
