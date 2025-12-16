@@ -28,26 +28,9 @@ def unwrap_phase_quality_guided(
     else:
         mask_bool = ~np.isnan(wrapped_phase)
 
-    # Fill NaN regions with interpolated values for unwrapping
-    # The unwrapping algorithm needs continuous data to work properly
-    from scipy.ndimage import distance_transform_edt
-
-    wrapped_filled = np.copy(wrapped_phase)
-
-    if np.any(~mask_bool):
-        # Find nearest valid pixel for each invalid pixel
-        # This is better than using mean because it preserves local structure
-        invalid_mask = ~mask_bool
-
-        # Get valid data
-        valid_data = np.copy(wrapped_phase)
-        valid_data[invalid_mask] = 0  # Temporary, will be replaced
-
-        # Use distance transform to find nearest neighbors
-        indices = distance_transform_edt(invalid_mask, return_distances=False, return_indices=True)
-
-        # Fill invalid regions with nearest valid values
-        wrapped_filled[invalid_mask] = wrapped_phase[tuple(indices[:, invalid_mask])]
+    # Replace NaN with 0 for unwrapping
+    # Don't interpolate - that smooths out the 2π discontinuities we need to detect!
+    wrapped_filled = np.nan_to_num(wrapped_phase, nan=0.0)
 
     # Debug: Check wrapped phase statistics
     print(f"\nPhase Unwrapping Debug:")
@@ -58,9 +41,28 @@ def unwrap_phase_quality_guided(
             print(f"  Wrapped range: {np.min(valid_wrapped):.4f} to {np.max(valid_wrapped):.4f} rad")
             print(f"  Wrapped mean: {np.mean(valid_wrapped):.4f} rad")
             print(f"  Valid pixels: {len(valid_wrapped)}")
+            # Check for phase jumps
+            sorted_phase = np.sort(valid_wrapped)
+            phase_diff = np.diff(sorted_phase)
+            max_jump = np.max(phase_diff)
+            print(f"  Max phase jump: {max_jump:.4f} rad ({max_jump/np.pi:.2f}π)")
 
-    # Unwrap the filled phase
-    unwrapped = unwrap_phase(wrapped_filled)
+    # Try using scikit-image unwrap_phase (quality-guided)
+    try:
+        unwrapped = unwrap_phase(wrapped_filled)
+        print(f"  Using scikit-image unwrap_phase")
+    except Exception as e:
+        print(f"  scikit-image unwrap failed: {e}, trying numpy unwrap")
+        # Fallback to numpy unwrap (row-by-row then column-by-column)
+        unwrapped = np.copy(wrapped_filled)
+
+        # Unwrap along rows first
+        for i in range(unwrapped.shape[0]):
+            unwrapped[i, :] = np.unwrap(unwrapped[i, :])
+
+        # Then unwrap along columns
+        for j in range(unwrapped.shape[1]):
+            unwrapped[:, j] = np.unwrap(unwrapped[:, j])
 
     # Debug: Check unwrapped phase statistics
     if np.any(mask_bool):

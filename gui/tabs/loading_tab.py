@@ -2,6 +2,7 @@
 Tab 1: Image Loading and Masking
 """
 
+import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QSpinBox, QCheckBox, QGroupBox, QSplitter,
@@ -62,9 +63,15 @@ class LoadingTab(QWidget):
         mask_group = QGroupBox("Mask Parameters")
         mask_layout = QVBoxLayout()
 
+        # Use outer mask checkbox
+        self.use_outer_mask_check = QCheckBox("Use Outer Mask")
+        self.use_outer_mask_check.setChecked(True)
+        self.use_outer_mask_check.toggled.connect(self.on_outer_mask_toggled)
+        mask_layout.addWidget(self.use_outer_mask_check)
+
         # Outer radius
         outer_layout = QHBoxLayout()
-        outer_layout.addWidget(QLabel("Outer Radius:"))
+        outer_layout.addWidget(QLabel("  Outer Radius:"))
         self.outer_radius_spin = QSpinBox()
         self.outer_radius_spin.setRange(0, 4000)
         self.outer_radius_spin.setValue(200)
@@ -72,9 +79,15 @@ class LoadingTab(QWidget):
         outer_layout.addWidget(self.outer_radius_spin)
         mask_layout.addLayout(outer_layout)
 
+        # Use inner mask checkbox
+        self.use_inner_mask_check = QCheckBox("Use Inner Mask (Central Obscuration)")
+        self.use_inner_mask_check.setChecked(True)
+        self.use_inner_mask_check.toggled.connect(self.on_inner_mask_toggled)
+        mask_layout.addWidget(self.use_inner_mask_check)
+
         # Inner radius
         inner_layout = QHBoxLayout()
-        inner_layout.addWidget(QLabel("Inner Radius:"))
+        inner_layout.addWidget(QLabel("  Inner Radius:"))
         self.inner_radius_spin = QSpinBox()
         self.inner_radius_spin.setRange(0, 4000)
         self.inner_radius_spin.setValue(50)
@@ -226,10 +239,35 @@ class LoadingTab(QWidget):
         self.center_x_spin.blockSignals(False)
         self.center_y_spin.blockSignals(False)
 
+    def on_outer_mask_toggled(self, checked):
+        """Handle outer mask checkbox toggle."""
+        self.outer_radius_spin.setEnabled(checked)
+        self.update_mask_from_controls()
+
+    def on_inner_mask_toggled(self, checked):
+        """Handle inner mask checkbox toggle."""
+        self.inner_radius_spin.setEnabled(checked)
+        self.update_mask_from_controls()
+
     def update_mask_from_controls(self):
         """Update mask editor from spinbox controls."""
-        outer_r = self.outer_radius_spin.value()
-        inner_r = self.inner_radius_spin.value()
+        # Get outer radius (use large value if outer mask disabled)
+        if self.use_outer_mask_check.isChecked():
+            outer_r = self.outer_radius_spin.value()
+        else:
+            # No outer limit - use image diagonal
+            if self.image is not None:
+                h, w = self.image.shape[:2]
+                outer_r = int(np.sqrt(h**2 + w**2))
+            else:
+                outer_r = 10000  # Large default
+
+        # Get inner radius (use 0 if inner mask disabled)
+        if self.use_inner_mask_check.isChecked():
+            inner_r = self.inner_radius_spin.value()
+        else:
+            inner_r = 0
+
         cx = self.center_x_spin.value()
         cy = self.center_y_spin.value()
 
@@ -240,8 +278,28 @@ class LoadingTab(QWidget):
         if self.image is None:
             return
 
-        # Generate mask
-        self.mask = self.mask_editor.generate_mask()
+        # Generate mask with current settings
+        # Get effective radii based on checkboxes
+        if self.use_outer_mask_check.isChecked():
+            outer_r = self.outer_radius_spin.value()
+        else:
+            # No outer limit
+            h, w = self.image.shape[:2]
+            outer_r = int(np.sqrt(h**2 + w**2))
+
+        if self.use_inner_mask_check.isChecked():
+            inner_r = self.inner_radius_spin.value()
+        else:
+            inner_r = 0
+
+        # Generate mask with effective radii
+        from core.masking import generate_circular_mask
+        self.mask = generate_circular_mask(
+            self.image.shape[:2],
+            (self.center_x_spin.value(), self.center_y_spin.value()),
+            outer_r,
+            inner_r
+        )
 
         # Store in main window
         self.main_window.current_image = self.image
