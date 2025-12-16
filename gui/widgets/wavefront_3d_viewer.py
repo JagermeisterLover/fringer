@@ -92,40 +92,46 @@ class Wavefront3DViewer(QWidget):
         wavefront_display = np.copy(wavefront_cropped)
         wavefront_display = wavefront_display - mean_val
 
-        # Smooth the wavefront data slightly to reduce noise artifacts
-        from scipy.ndimage import gaussian_filter
-        wavefront_smooth = gaussian_filter(wavefront_display, sigma=1.0)
-
-        # Apply mask for display
+        # Apply mask - set invalid regions to NaN
         if mask_cropped is not None:
+            wavefront_display[~mask_cropped.astype(bool)] = np.nan
+
+        # Light smoothing only (reduce noise without losing features)
+        from scipy.ndimage import gaussian_filter
+        # Only smooth the valid region
+        if mask_cropped is not None:
+            # Create a copy for smoothing
+            smooth_input = np.nan_to_num(wavefront_display, nan=0.0)
+            wavefront_smooth = gaussian_filter(smooth_input, sigma=0.5)
+            # Reapply mask
             wavefront_smooth[~mask_cropped.astype(bool)] = np.nan
+        else:
+            wavefront_smooth = gaussian_filter(wavefront_display, sigma=0.5)
 
         # Downsample if too large (for performance)
         h, w = wavefront_smooth.shape
         if h > 150 or w > 150:
             from scipy.ndimage import zoom
             scale_factor = 150.0 / max(h, w)
-            wavefront_smooth = zoom(wavefront_smooth, scale_factor, order=3)
+            # Handle NaN during zoom by replacing temporarily
+            temp_data = np.nan_to_num(wavefront_smooth, nan=np.nanmean(wavefront_smooth))
+            wavefront_smooth = zoom(temp_data, scale_factor, order=1)
             if mask_cropped is not None:
-                mask_display = zoom(mask_cropped.astype(float), scale_factor, order=1) > 0.5
+                mask_display = zoom(mask_cropped.astype(float), scale_factor, order=0) > 0.5
+                wavefront_smooth[~mask_display.astype(bool)] = np.nan
             else:
                 mask_display = None
         else:
             mask_display = mask_cropped
 
-        # Replace NaN with minimum value for smoother display edges
+        # For display, replace NaN with mean (not min) to avoid artificial depressions
         wavefront_clean = wavefront_smooth.copy()
-        if mask_display is not None:
-            # Get the valid data range
-            valid_clean = wavefront_clean[mask_display.astype(bool)]
-            valid_clean = valid_clean[~np.isnan(valid_clean)]
-            if len(valid_clean) > 0:
-                edge_value = np.min(valid_clean)
-            else:
-                edge_value = 0
-            # Fill masked regions with edge value
-            wavefront_clean[~mask_display.astype(bool)] = edge_value
-        wavefront_clean[np.isnan(wavefront_clean)] = 0
+        nan_mask = np.isnan(wavefront_clean)
+        if np.any(~nan_mask):
+            fill_value = np.nanmean(wavefront_clean)
+            wavefront_clean[nan_mask] = fill_value
+        else:
+            wavefront_clean[nan_mask] = 0
 
         # Convert to wavelengths for display (more intuitive than meters)
         # Using HeNe wavelength 632.8nm
@@ -144,6 +150,12 @@ class Wavefront3DViewer(QWidget):
         z_min, z_max = np.min(valid_z), np.max(valid_z)
         z_range = z_max - z_min
 
+        # Debug: Print z-data statistics
+        print(f"Wavefront 3D Debug:")
+        print(f"  Z range (waves): {z_min:.4f} to {z_max:.4f} (range: {z_range:.4f})")
+        print(f"  Array shape: {z_data.shape}")
+        print(f"  XY size: {max(z_data.shape)}")
+
         # Create colormap (use jet for better contrast)
         cmap = plt.get_cmap('jet')
         norm = Normalize(vmin=z_min, vmax=z_max)
@@ -151,16 +163,26 @@ class Wavefront3DViewer(QWidget):
         # Map z values to colors (vectorized for efficiency)
         colors = cmap(norm(z_data))
 
+        # Ensure colors are RGBA float32 (0-1 range)
+        colors = colors.astype(np.float32)
+
         # Scale z-axis for better 3D visualization
-        # Make z-scale proportional to xy dimensions
+        # Need AGGRESSIVE scaling since wavefront variations are small (typically 0.01-0.1 waves)
         xy_size = max(z_data.shape)
-        if z_range > 0:
-            # Scale so z variations are visible but not exaggerated
-            z_scale = xy_size / (5 * z_range)  # z will be 1/5 of xy size for 1 wave variation
+        if z_range > 0.001:  # Only scale if there's meaningful variation
+            # Make z-variations very prominent: use 50-100x amplification
+            # For 0.1 wave range across 100 pixel surface, this gives z-height of 20-40 units
+            z_scale = xy_size / (z_range * 0.5)  # Aggressive scaling
+            # Cap the scaling to avoid extreme values
+            z_scale = min(z_scale, xy_size * 100)
         else:
-            z_scale = 1.0
+            z_scale = xy_size  # Default scaling
+
+        print(f"  Z scale factor: {z_scale:.2f}")
 
         z_data_scaled = z_data * z_scale
+
+        print(f"  Scaled Z range: {np.min(z_data_scaled):.2f} to {np.max(z_data_scaled):.2f}")
 
         # Create surface plot with explicit colors
         self.surface_plot = gl.GLSurfacePlotItem(
