@@ -37,46 +37,49 @@ def extract_phase_fft(
     fft = np.fft.fft2(img)
     fft_shifted = np.fft.fftshift(fft)
 
-    # 2. Find carrier frequency (highest peak excluding DC)
+    # 2. Find carrier frequency (+1 order sideband peak, excluding DC)
+    # The FFT has: DC (center), +1 order (carrier+phase), -1 order (conjugate)
+    # We want to find and select the +1 order sideband
     if carrier_frequency is None:
         magnitude = np.abs(fft_shifted)
         h, w = magnitude.shape
 
-        # Mask DC component
+        # Mask out DC component (average brightness - not useful for phase)
         center_y, center_x = h // 2, w // 2
         magnitude[center_y-DC_MASK_RADIUS:center_y+DC_MASK_RADIUS,
                   center_x-DC_MASK_RADIUS:center_x+DC_MASK_RADIUS] = 0
 
-        # Find peak
+        # Find the +1 order carrier peak (highest peak after masking DC)
         peak_idx = np.unravel_index(np.argmax(magnitude), magnitude.shape)
         carrier_frequency = (peak_idx[1] - center_x, peak_idx[0] - center_y)
 
-    # 3. Create bandpass filter centered at carrier frequency
+    # 3. Create bandpass filter CENTERED AT the carrier frequency
+    # This SELECTS the sideband (we want this!), doesn't filter it out
     h, w = interferogram.shape
     y, x = np.ogrid[:h, :w]
     center_y, center_x = h // 2, w // 2
 
-    # Gaussian bandpass filter
+    # Gaussian bandpass filter centered at carrier (selects +1 order sideband)
     fx, fy = carrier_frequency
     bandpass = np.exp(-((x - (center_x + fx))**2 + (y - (center_y + fy))**2) / (2 * filter_sigma**2))
 
     print(f"\nFFT Phase Extraction Debug:")
-    print(f"  Carrier frequency: fx={fx}, fy={fy}")
+    print(f"  Carrier frequency (sideband location): fx={fx}, fy={fy}")
     print(f"  Filter sigma: {filter_sigma}")
 
-    # 4. Apply filter
+    # 4. Apply filter to SELECT the sideband
     filtered_fft = fft_shifted * bandpass
 
-    # 5. CRITICAL: Shift the filtered spectrum to baseband (DC)
+    # 5. CRITICAL: Shift the selected sideband to DC (demodulation)
     # This moves the carrier peak from (center+fx, center+fy) to (center, center)
-    # We do this in the shifted frequency space before inverse FFT
+    # Demodulation removes the carrier oscillation, leaving only the phase
     filtered_fft_shifted_to_dc = np.roll(filtered_fft, (-fy, -fx), axis=(0, 1))
 
-    # 6. Inverse FFT to get baseband complex field
+    # 6. Inverse FFT to get demodulated complex field
     filtered_fft_unshifted = np.fft.ifftshift(filtered_fft_shifted_to_dc)
     complex_field = np.fft.ifft2(filtered_fft_unshifted)
 
-    # 7. Extract phase from complex field (now at baseband, no carrier)
+    # 7. Extract phase from complex field (carrier removed, only phase remains)
     wrapped_phase = np.arctan2(complex_field.imag, complex_field.real)
 
     # Apply mask to phase - use NaN for invalid regions instead of 0
