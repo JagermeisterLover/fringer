@@ -24,12 +24,18 @@ class Wavefront3DViewer(QWidget):
 
         # Configure view
         self.view.setCameraPosition(distance=VIEW_DISTANCE, elevation=VIEW_ELEVATION, azimuth=VIEW_AZIMUTH)
-        self.view.opts['bgcolor'] = (20, 20, 20, 255)
+        self.view.opts['bgcolor'] = (240, 240, 245, 255)  # Light gray background
 
         # Add grid
-        grid = gl.GLGridItem()
-        grid.scale(2, 2, 1)
-        self.view.addItem(grid)
+        self.grid = gl.GLGridItem()
+        self.grid.scale(10, 10, 1)
+        self.grid.setColor((100, 100, 100, 100))  # Dark gray grid
+        self.view.addItem(self.grid)
+
+        # Add axis
+        self.axis = gl.GLAxisItem()
+        self.axis.setSize(50, 50, 50)
+        self.view.addItem(self.axis)
 
     def display_wavefront(self, wavefront: np.ndarray, mask: np.ndarray = None):
         """
@@ -126,32 +132,54 @@ class Wavefront3DViewer(QWidget):
         wavelength = 632.8e-9
         z_data = wavefront_clean / wavelength
 
-        # Scale for better 3D visualization
-        valid_z = z_data[np.isfinite(z_data)]
-        if len(valid_z) > 0:
-            z_range = np.ptp(valid_z)
-            if z_range > 0:
-                # Scale to range of approximately 20-30 units for better 3D view
-                scale_factor = 25.0 / max(z_range, 0.01)
-                z_data = z_data * scale_factor
+        # Create explicit color map based on height
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import Normalize
 
-        # Create surface plot with height-based coloring
+        # Get valid z range for colormap
+        valid_z = z_data[np.isfinite(z_data)]
+        if len(valid_z) == 0:
+            return
+
+        z_min, z_max = np.min(valid_z), np.max(valid_z)
+        z_range = z_max - z_min
+
+        # Create colormap (use jet for better contrast)
+        cmap = plt.get_cmap('jet')
+        norm = Normalize(vmin=z_min, vmax=z_max)
+
+        # Map z values to colors (vectorized for efficiency)
+        colors = cmap(norm(z_data))
+
+        # Scale z-axis for better 3D visualization
+        # Make z-scale proportional to xy dimensions
+        xy_size = max(z_data.shape)
+        if z_range > 0:
+            # Scale so z variations are visible but not exaggerated
+            z_scale = xy_size / (5 * z_range)  # z will be 1/5 of xy size for 1 wave variation
+        else:
+            z_scale = 1.0
+
+        z_data_scaled = z_data * z_scale
+
+        # Create surface plot with explicit colors
         self.surface_plot = gl.GLSurfacePlotItem(
-            z=z_data,
-            shader='heightColor',
+            z=z_data_scaled,
+            colors=colors,
             computeNormals=True,
             smooth=True,
             drawEdges=False,
             glOptions='opaque'
         )
 
-        # Set color map (built-in heightColor shader)
-        # The shader automatically colors based on height
-
-        # Center and scale the plot
+        # Center the plot
         h_scaled, w_scaled = z_data.shape
         self.surface_plot.translate(-w_scaled/2, -h_scaled/2, 0)
-        self.surface_plot.scale(1, 1, 1)
+
+        # Update grid to match surface size
+        grid_size = max(h_scaled, w_scaled) / 10
+        self.grid.resetTransform()
+        self.grid.scale(grid_size, grid_size, 1)
 
         self.view.addItem(self.surface_plot)
 
