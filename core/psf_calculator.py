@@ -32,11 +32,14 @@ def calculate_psf(
     """
     h, w = wavefront.shape
 
-    # Apply mask to wavefront
+    # Apply mask to wavefront and replace NaN with 0
     if mask is not None:
-        wavefront_masked = wavefront * mask
+        wavefront_masked = np.copy(wavefront)
+        # Replace NaN values with 0 (they will be masked out anyway)
+        wavefront_masked = np.nan_to_num(wavefront_masked, nan=0.0)
+        wavefront_masked = wavefront_masked * mask
     else:
-        wavefront_masked = wavefront
+        wavefront_masked = np.nan_to_num(wavefront, nan=0.0)
 
     # Create complex pupil function
     # P(x,y) = A(x,y) * exp(i * k * W(x,y))

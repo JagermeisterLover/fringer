@@ -18,7 +18,7 @@ from core.zernike import ZernikeFitter
 from core.psf_calculator import calculate_psf, calculate_strehl_ratio
 from algorithms.metrics import calculate_wavefront_metrics, calculate_phase_metrics, format_metric_value
 from gui.widgets.wavefront_3d_viewer import Wavefront3DViewer
-from config.settings import DEFAULT_WAVELENGTH, DEFAULT_ZERNIKE_MAX_ORDER
+from config.settings import DEFAULT_WAVELENGTH, DEFAULT_ZERNIKE_MAX_ORDER, DEFAULT_PUPIL_DIAMETER
 
 
 class MatplotlibCanvas(FigureCanvas):
@@ -217,6 +217,7 @@ class AnalysisTab(QWidget):
             self.psf, self.psf_scale = calculate_psf(
                 self.wavefront,
                 wavelength=DEFAULT_WAVELENGTH,
+                pupil_diameter=DEFAULT_PUPIL_DIAMETER,
                 mask=self.mask
             )
 
@@ -280,6 +281,29 @@ class AnalysisTab(QWidget):
 
     def display_wavefront(self):
         """Display 3D wavefront."""
+        # Debug: Check wavefront statistics before display
+        if self.mask is not None:
+            valid_wf = self.wavefront[self.mask.astype(bool)]
+        else:
+            valid_wf = self.wavefront.flatten()
+        valid_wf = valid_wf[~np.isnan(valid_wf)]
+
+        print(f"\nWavefront before 3D display:")
+        print(f"  Shape: {self.wavefront.shape}")
+        print(f"  Valid points: {len(valid_wf)}")
+        print(f"  Range (meters): {np.min(valid_wf):.3e} to {np.max(valid_wf):.3e}")
+        print(f"  Range (waves @ 632.8nm): {np.min(valid_wf)/632.8e-9:.4f} to {np.max(valid_wf)/632.8e-9:.4f}")
+        print(f"  Std dev (waves): {np.std(valid_wf)/632.8e-9:.4f}")
+
+        # Check for wrapped phase characteristics (sudden jumps)
+        if len(valid_wf) > 100:
+            wf_waves = valid_wf / 632.8e-9
+            diffs = np.diff(sorted(wf_waves))
+            max_diff = np.max(diffs)
+            print(f"  Max consecutive value diff: {max_diff:.4f} waves")
+            if max_diff > 0.5:
+                print(f"  WARNING: Large jumps detected - may be wrapped phase!")
+
         self.wavefront_3d_viewer.display_wavefront(self.wavefront, self.mask)
 
         # Display metrics

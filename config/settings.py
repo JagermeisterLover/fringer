@@ -41,6 +41,7 @@ ZERNIKE_NORMALIZATION = 'noll'  # 'noll' or 'fringe'
 # PSF Calculation Settings
 PSF_FFT_SIZE = 2048
 PSF_OVERSAMPLING = 4
+DEFAULT_PUPIL_DIAMETER = 0.05  # Default pupil/mirror diameter in meters (50mm)
 
 # Visualization Settings
 COLORMAPS = [

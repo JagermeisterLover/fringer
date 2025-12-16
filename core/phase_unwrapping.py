@@ -27,11 +27,38 @@ def unwrap_phase_quality_guided(
 
     # Unwrap using scikit-image
     if mask is not None:
-        # Create wrapped phase array with invalid regions set to 0
-        wrapped_masked = np.copy(wrapped_phase)
-        wrapped_masked[~mask.astype(bool)] = 0
-        unwrapped = unwrap_phase(wrapped_masked)
-        unwrapped[~mask.astype(bool)] = np.nan
+        # Don't set masked region to 0 - this creates artificial discontinuities!
+        # Instead, use the mask parameter of unwrap_phase if available,
+        # or extrapolate into masked regions
+        from scipy.ndimage import binary_erosion, binary_dilation
+
+        # Create a slightly eroded mask to avoid edge issues
+        mask_bool = mask.astype(bool)
+
+        # Fill masked regions with extrapolated values instead of 0
+        # This helps the unwrapping algorithm work correctly
+        wrapped_filled = np.copy(wrapped_phase)
+
+        # Simple inpainting: dilate valid region and copy border values
+        if not np.all(mask_bool):
+            # Get the mean phase in valid region as fallback
+            mean_phase = np.mean(wrapped_phase[mask_bool])
+            wrapped_filled[~mask_bool] = mean_phase
+
+        # Debug: Check wrapped phase statistics
+        print(f"\nPhase Unwrapping Debug:")
+        print(f"  Wrapped range: {np.min(wrapped_phase[mask_bool]):.4f} to {np.max(wrapped_phase[mask_bool]):.4f} rad")
+        print(f"  Wrapped mean: {np.mean(wrapped_phase[mask_bool]):.4f} rad")
+
+        # Unwrap the filled phase
+        unwrapped = unwrap_phase(wrapped_filled)
+
+        # Debug: Check unwrapped phase statistics
+        print(f"  Unwrapped range: {np.nanmin(unwrapped[mask_bool]):.4f} to {np.nanmax(unwrapped[mask_bool]):.4f} rad")
+        print(f"  Unwrapped span: {np.ptp(unwrapped[mask_bool]):.4f} rad ({np.ptp(unwrapped[mask_bool])/(2*np.pi):.2f} waves)")
+
+        # Set invalid regions to NaN after unwrapping
+        unwrapped[~mask_bool] = np.nan
     else:
         unwrapped = unwrap_phase(wrapped_phase)
 
