@@ -56,67 +56,68 @@ class Wavefront3DViewer(QWidget):
         if len(valid_data) == 0:
             return
 
-        # Remove piston (mean) from valid data only
+        # Remove piston (mean) and optionally tilt for better visualization
         mean_val = np.mean(valid_data)
 
         # Create display array
         wavefront_display = np.copy(wavefront)
         wavefront_display = wavefront_display - mean_val
 
+        # Smooth the wavefront data slightly to reduce noise artifacts
+        from scipy.ndimage import gaussian_filter
+        wavefront_smooth = gaussian_filter(wavefront_display, sigma=1.0)
+
         # Apply mask for display
         if mask is not None:
-            wavefront_display[~mask.astype(bool)] = np.nan
+            wavefront_smooth[~mask.astype(bool)] = np.nan
 
-        # Downsample if too large (for performance)
-        h, w = wavefront_display.shape
-        if h > 200 or w > 200:
-            stride = max(h // 200, w // 200)
-            wavefront_display = wavefront_display[::stride, ::stride]
+        # Downsample if too large (for performance) - use average instead of simple indexing
+        h, w = wavefront_smooth.shape
+        if h > 150 or w > 150:
+            from scipy.ndimage import zoom
+            scale_factor = 150.0 / max(h, w)
+            wavefront_smooth = zoom(wavefront_smooth, scale_factor, order=3)
             if mask is not None:
-                mask_display = mask[::stride, ::stride]
+                mask_display = zoom(mask.astype(float), scale_factor, order=1) > 0.5
             else:
                 mask_display = None
         else:
             mask_display = mask
 
-        # Replace NaN with mean for display
-        wavefront_clean = wavefront_display.copy()
+        # Replace NaN with boundary values for smoother display
+        wavefront_clean = wavefront_smooth.copy()
+        if mask_display is not None:
+            # Fill masked regions with edge values instead of zero
+            valid_mean = np.nanmean(wavefront_clean[mask_display.astype(bool)])
+            wavefront_clean[~mask_display.astype(bool)] = valid_mean if not np.isnan(valid_mean) else 0
         wavefront_clean[np.isnan(wavefront_clean)] = 0
 
-        # Convert to micrometers for better scale
-        z_data = wavefront_clean * 1e6
+        # Convert to wavelengths for display (more intuitive than meters)
+        # Using HeNe wavelength 632.8nm
+        wavelength = 632.8e-9
+        z_data = wavefront_clean / wavelength
 
-        # Normalize z range to reasonable visualization scale
+        # Scale for better 3D visualization
         valid_z = z_data[np.isfinite(z_data)]
         if len(valid_z) > 0:
             z_range = np.ptp(valid_z)
             if z_range > 0:
-                # Scale to range of approximately 10-20 units for better 3D view
-                scale_factor = 15.0 / z_range
+                # Scale to range of approximately 20-30 units for better 3D view
+                scale_factor = 25.0 / max(z_range, 0.01)
                 z_data = z_data * scale_factor
 
-        # Create surface plot
-        colors = np.zeros((*z_data.shape, 4))
-
-        # Color based on height
-        if len(valid_z) > 0:
-            z_min, z_max = np.nanmin(z_data), np.nanmax(z_data)
-            if z_max > z_min:
-                normalized = (z_data - z_min) / (z_max - z_min)
-                # Color map: blue (low) -> green (mid) -> red (high)
-                colors[..., 2] = np.clip(1 - normalized, 0, 1)  # Blue
-                colors[..., 1] = np.clip(1 - np.abs(normalized - 0.5) * 2, 0, 1)  # Green
-                colors[..., 0] = np.clip(normalized, 0, 1)  # Red
-                colors[..., 3] = 1.0  # Alpha
-
+        # Create surface plot with height-based coloring
         self.surface_plot = gl.GLSurfacePlotItem(
             z=z_data,
-            colors=colors,
-            shader='shaded',
+            shader='heightColor',
             computeNormals=True,
             smooth=True,
-            drawEdges=False
+            drawEdges=False,
+            glOptions='opaque'
         )
+
+        # Set color map (built-in heightColor shader)
+        # The shader automatically colors based on height
 
         # Center and scale the plot
         h_scaled, w_scaled = z_data.shape

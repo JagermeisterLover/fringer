@@ -99,26 +99,27 @@ class AnalysisTab(QWidget):
 
         tab = QWidget()
         layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         # Use splitter for proper proportions
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Left: 3D view
-        view_widget = QWidget()
-        view_layout = QVBoxLayout(view_widget)
-        view_layout.addWidget(QLabel("3D Wavefront Visualization"))
+        # Left: 3D view (just the viewer, no extra label)
         self.wavefront_3d_viewer = Wavefront3DViewer()
-        view_layout.addWidget(self.wavefront_3d_viewer)
-        splitter.addWidget(view_widget)
+        self.wavefront_3d_viewer.setMinimumWidth(400)
+        splitter.addWidget(self.wavefront_3d_viewer)
 
-        # Right: Metrics
+        # Right: Metrics (compact)
         metrics_widget = QWidget()
+        metrics_widget.setMaximumWidth(350)
         metrics_layout = QVBoxLayout(metrics_widget)
+        metrics_layout.setContentsMargins(5, 5, 5, 5)
+
         metrics_group = QGroupBox("Wavefront Metrics")
         metrics_box_layout = QVBoxLayout()
         self.wavefront_metrics_label = QTextEdit()
         self.wavefront_metrics_label.setReadOnly(True)
-        self.wavefront_metrics_label.setMaximumHeight(300)
+        self.wavefront_metrics_label.setMaximumHeight(250)
         self.wavefront_metrics_label.setText("Run analysis to see metrics")
         metrics_box_layout.addWidget(self.wavefront_metrics_label)
         metrics_group.setLayout(metrics_box_layout)
@@ -126,8 +127,10 @@ class AnalysisTab(QWidget):
         metrics_layout.addStretch()
         splitter.addWidget(metrics_widget)
 
-        # Set initial sizes: 70% for 3D view, 30% for metrics
-        splitter.setSizes([700, 300])
+        # Set initial sizes: 80% for 3D view, 20% for metrics
+        splitter.setSizes([800, 200])
+        splitter.setStretchFactor(0, 3)  # 3D view gets more stretch
+        splitter.setStretchFactor(1, 1)  # Metrics gets less
 
         layout.addWidget(splitter)
         self.result_tabs.addTab(tab, "3D Wavefront")
