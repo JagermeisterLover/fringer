@@ -23,7 +23,6 @@ class ImageViewer(QLabel):
     def __init__(self):
         super().__init__()
         self.setMinimumSize(300, 300)
-        self.setScaledContents(True)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def display_image(self, image: np.ndarray):
@@ -42,7 +41,13 @@ class ImageViewer(QLabel):
             q_img = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
 
         pixmap = QPixmap.fromImage(q_img)
-        self.setPixmap(pixmap)
+        # Scale to fit while maintaining aspect ratio
+        scaled_pixmap = pixmap.scaled(
+            self.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+        self.setPixmap(scaled_pixmap)
 
 
 class EditingTab(QWidget):
@@ -53,6 +58,7 @@ class EditingTab(QWidget):
         self.main_window = main_window
         self.history = HistoryManager(max_history=20)
         self.current_image = None
+        self.original_image = None  # Store original separately
         self.mask = None
         self.setup_ui()
 
@@ -186,6 +192,7 @@ class EditingTab(QWidget):
 
     def set_image(self, image: np.ndarray, mask: np.ndarray):
         """Set the image for editing."""
+        self.original_image = image.copy()  # Store original
         self.current_image = image.copy()
         self.mask = mask
         self.history.reset()
@@ -195,9 +202,30 @@ class EditingTab(QWidget):
         self.calculate_btn.setEnabled(True)
 
     def update_display(self):
-        """Update the image display."""
+        """Update the image display with mask applied."""
         if self.current_image is not None:
-            self.image_viewer.display_image(self.current_image)
+            # Create display image with mask visualization
+            display_image = self.current_image.copy()
+
+            if self.mask is not None:
+                # Create a semi-transparent overlay for masked regions
+                if len(display_image.shape) == 2:
+                    # Convert grayscale to RGB for colored overlay
+                    display_image = np.stack([display_image]*3, axis=-1)
+
+                # Apply red tint to masked regions
+                masked_regions = ~self.mask.astype(bool)
+                display_image[masked_regions, 0] = np.clip(
+                    display_image[masked_regions, 0] * 0.5 + 128, 0, 255
+                ).astype(np.uint8)
+                display_image[masked_regions, 1] = np.clip(
+                    display_image[masked_regions, 1] * 0.5, 0, 255
+                ).astype(np.uint8)
+                display_image[masked_regions, 2] = np.clip(
+                    display_image[masked_regions, 2] * 0.5, 0, 255
+                ).astype(np.uint8)
+
+            self.image_viewer.display_image(display_image)
 
     def update_buttons(self):
         """Update button states based on history."""
@@ -223,9 +251,10 @@ class EditingTab(QWidget):
 
     def reset_to_original(self):
         """Reset to original image."""
-        if len(self.history.history) > 0:
-            self.current_image = self.history.history[0][0].copy()
-            self.history.add_state(self.current_image, "Reset to Original")
+        if self.original_image is not None:
+            self.current_image = self.original_image.copy()
+            self.history.reset()
+            self.history.add_state(self.current_image, "Original")
             self.update_display()
             self.update_buttons()
 

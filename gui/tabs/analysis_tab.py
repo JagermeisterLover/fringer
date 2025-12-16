@@ -95,29 +95,41 @@ class AnalysisTab(QWidget):
 
     def create_wavefront_tab(self):
         """Create wavefront visualization tab."""
+        from PyQt6.QtWidgets import QSplitter
+
         tab = QWidget()
-        layout = QHBoxLayout(tab)
+        layout = QVBoxLayout(tab)
+
+        # Use splitter for proper proportions
+        splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # Left: 3D view
-        view_layout = QVBoxLayout()
+        view_widget = QWidget()
+        view_layout = QVBoxLayout(view_widget)
         view_layout.addWidget(QLabel("3D Wavefront Visualization"))
         self.wavefront_3d_viewer = Wavefront3DViewer()
         view_layout.addWidget(self.wavefront_3d_viewer)
-        layout.addLayout(view_layout)
+        splitter.addWidget(view_widget)
 
         # Right: Metrics
-        metrics_layout = QVBoxLayout()
+        metrics_widget = QWidget()
+        metrics_layout = QVBoxLayout(metrics_widget)
         metrics_group = QGroupBox("Wavefront Metrics")
         metrics_box_layout = QVBoxLayout()
         self.wavefront_metrics_label = QTextEdit()
         self.wavefront_metrics_label.setReadOnly(True)
+        self.wavefront_metrics_label.setMaximumHeight(300)
         self.wavefront_metrics_label.setText("Run analysis to see metrics")
         metrics_box_layout.addWidget(self.wavefront_metrics_label)
         metrics_group.setLayout(metrics_box_layout)
         metrics_layout.addWidget(metrics_group)
+        metrics_layout.addStretch()
+        splitter.addWidget(metrics_widget)
 
-        layout.addLayout(metrics_layout)
+        # Set initial sizes: 70% for 3D view, 30% for metrics
+        splitter.setSizes([700, 300])
 
+        layout.addWidget(splitter)
         self.result_tabs.addTab(tab, "3D Wavefront")
 
     def create_psf_tab(self):

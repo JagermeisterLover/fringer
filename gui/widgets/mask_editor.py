@@ -90,10 +90,18 @@ class MaskEditor(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # Draw background image
+        # Draw background image scaled to fit while maintaining aspect ratio
         if self.q_image is not None:
             pixmap = QPixmap.fromImage(self.q_image)
-            painter.drawPixmap(0, 0, pixmap)
+            scaled_pixmap = pixmap.scaled(
+                self.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            # Center the image
+            x = (self.width() - scaled_pixmap.width()) // 2
+            y = (self.height() - scaled_pixmap.height()) // 2
+            painter.drawPixmap(x, y, scaled_pixmap)
 
         if self.mask_visible and self.image is not None:
             # Draw outer circle
