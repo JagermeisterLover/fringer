@@ -207,10 +207,7 @@ class AnalysisTab(QWidget):
             # 2. Unwrap phase
             self.unwrapped_phase, quality_map = unwrap_phase_quality_guided(self.wrapped_phase, self.mask)
 
-            # 3. Remove piston and tilt
-            self.unwrapped_phase = remove_piston_tilt(self.unwrapped_phase, self.mask)
-
-            # 4. Convert to wavefront
+            # 3. Convert to wavefront (piston/tilt will be removed by metrics calculation)
             self.wavefront = phase_to_wavefront(self.unwrapped_phase, DEFAULT_WAVELENGTH)
 
             # 5. Calculate PSF
@@ -249,8 +246,12 @@ class AnalysisTab(QWidget):
         ax1 = self.phase_canvas.fig.add_subplot(121)
         ax2 = self.phase_canvas.fig.add_subplot(122)
 
-        # Wrapped phase
-        im1 = ax1.imshow(self.wrapped_phase, cmap='twilight')
+        # Wrapped phase - mask outside circle to NaN for display
+        wrapped_display = self.wrapped_phase.copy()
+        if self.mask is not None:
+            wrapped_display[~self.mask.astype(bool)] = np.nan
+
+        im1 = ax1.imshow(wrapped_display, cmap='twilight', vmin=-np.pi, vmax=np.pi)
         ax1.set_title('Wrapped Phase')
         ax1.axis('off')
         self.phase_canvas.fig.colorbar(im1, ax=ax1, fraction=0.046)
@@ -260,7 +261,7 @@ class AnalysisTab(QWidget):
         if self.mask is not None:
             unwrapped_display[~self.mask.astype(bool)] = np.nan
 
-        im2 = ax2.imshow(unwrapped_display, cmap='jet')
+        im2 = ax2.imshow(unwrapped_display, cmap='viridis')
         ax2.set_title('Unwrapped Phase')
         ax2.axis('off')
         self.phase_canvas.fig.colorbar(im2, ax=ax2, fraction=0.046)

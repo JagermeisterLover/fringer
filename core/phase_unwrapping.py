@@ -15,22 +15,22 @@ def unwrap_phase_quality_guided(
     Unwrap phase using quality-guided algorithm.
 
     Args:
-        wrapped_phase: Wrapped phase in range [-π, π] (NaN for invalid regions)
-        mask: Binary mask defining valid region (optional, will be derived from NaN if not provided)
+        wrapped_phase: Wrapped phase in range [-π, π]
+        mask: Binary mask defining valid region (optional)
 
     Returns:
-        unwrapped_phase: Continuous phase
+        unwrapped_phase: Continuous phase (NaN outside mask)
         quality_map: Quality metric for each pixel
     """
-    # Determine valid regions from NaN values or mask
+    # Determine valid regions from mask
     if mask is not None:
         mask_bool = mask.astype(bool)
     else:
+        # If no mask provided, use all non-NaN values
         mask_bool = ~np.isnan(wrapped_phase)
 
-    # Replace NaN with 0 for unwrapping
-    # Don't interpolate - that smooths out the 2π discontinuities we need to detect!
-    wrapped_filled = np.nan_to_num(wrapped_phase, nan=0.0)
+    # Use wrapped_phase directly (already has values everywhere)
+    wrapped_filled = wrapped_phase
 
     # Debug: Check wrapped phase statistics
     print(f"\nPhase Unwrapping Debug:")
@@ -45,7 +45,7 @@ def unwrap_phase_quality_guided(
             sorted_phase = np.sort(valid_wrapped)
             phase_diff = np.diff(sorted_phase)
             max_jump = np.max(phase_diff)
-            print(f"  Max phase jump: {max_jump:.4f} rad ({max_jump/np.pi:.2f}π)")
+            print(f"  Max phase jump: {max_jump:.4f} rad ({max_jump/np.pi:.2f}*pi)")
 
     # Try using scikit-image unwrap_phase (quality-guided)
     try:
@@ -177,7 +177,15 @@ def phase_to_wavefront(
     wavelength: float = 632.8e-9
 ) -> np.ndarray:
     """
-    Convert phase (radians) to wavefront (meters).
+    Convert phase (radians) to optical path difference (meters).
+
+    The relationship between OPD and phase is:
+        phi = 2*pi*OPD / lambda
+    Solving for OPD:
+        OPD = phi * lambda / (2*pi)
+
+    For reflective interferometry, OPD = 2*h where h is surface height.
+    For transmissive interferometry, OPD = h directly.
 
     Args:
         unwrapped_phase: Unwrapped phase in radians
@@ -195,7 +203,10 @@ def wavefront_to_phase(
     wavelength: float = 632.8e-9
 ) -> np.ndarray:
     """
-    Convert wavefront (meters) to phase (radians).
+    Convert optical path difference (meters) to phase (radians).
+
+    The relationship is:
+        phi = 2*pi*OPD / lambda
 
     Args:
         wavefront: Optical path difference in meters
