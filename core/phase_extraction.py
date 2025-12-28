@@ -1,8 +1,9 @@
 """
-Phase extraction from interferograms using FFT method.
+Phase extraction from interferograms using Takeda (Fourier) method.
 """
 
 import numpy as np
+from scipy.fft import fft2, ifft2, fftshift, ifftshift
 from typing import Optional, Tuple
 from config.settings import FFT_FILTER_SIGMA, DC_MASK_RADIUS
 
@@ -14,7 +15,9 @@ def extract_phase_fft(
     filter_sigma: float = FFT_FILTER_SIGMA
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Extract phase from interferogram using Fourier transform method.
+    Extract phase from interferogram using Takeda (Fourier) method.
+
+    This is the EXACT implementation from the working Tkinter reference code.
 
     Args:
         interferogram: Input interferogram image (2D array)
@@ -26,55 +29,53 @@ def extract_phase_fft(
         wrapped_phase: Phase map in range [-π, π]
         fft_spectrum: FFT spectrum for visualization
     """
-    # Convert to float
     img = interferogram.astype(np.float64)
 
-    # Apply mask if provided
+    # Normalize image
+    img = (img - img.mean()) / (img.std() + 1e-12)
+
+    # Apply mask to ignore outside
     if mask is not None:
-        img = img * mask
+        img_masked = img * mask
+    else:
+        img_masked = img
 
-    # 1. Compute FFT
-    fft = np.fft.fft2(img)
-    fft_shifted = np.fft.fftshift(fft)
+    # Takeda (Fourier) method: 2D FFT, isolate one sideband, inverse FFT -> complex field
+    F = fftshift(fft2(img_masked))
+    mag = np.abs(F)
 
-    # 2. Find carrier frequency (highest peak excluding DC)
-    if carrier_frequency is None:
-        magnitude = np.abs(fft_shifted)
-        h, w = magnitude.shape
+    # suppress central low-frequency area when searching for sideband peak
+    h, w = img.shape
+    cy = h//2
+    cx = w//2
+    rr = int(min(h, w) * 0.08)  # radius for DC suppression
+    yy, xx = np.mgrid[:h, :w]
+    dc_mask = (xx - cx)**2 + (yy - cy)**2 <= rr**2
+    mag_masked = mag.copy()
+    mag_masked[dc_mask] = 0.0
 
-        # Mask DC component
-        center_y, center_x = h // 2, w // 2
-        magnitude[center_y-DC_MASK_RADIUS:center_y+DC_MASK_RADIUS,
-                  center_x-DC_MASK_RADIUS:center_x+DC_MASK_RADIUS] = 0
+    # Find peak position (one sideband)
+    peak_idx = np.unravel_index(np.argmax(mag_masked), mag_masked.shape)
+    pk_y, pk_x = peak_idx
 
-        # Find peak
-        peak_idx = np.unravel_index(np.argmax(magnitude), magnitude.shape)
-        carrier_frequency = (peak_idx[1] - center_x, peak_idx[0] - center_y)
+    # Create a gaussian filter around that peak in the frequency domain
+    sigma = max(8, int(min(h, w) * 0.04))
+    gauss = np.exp(-(((yy - pk_y)**2 + (xx - pk_x)**2) / (2.0*sigma*sigma)))
 
-    # 3. Create bandpass filter centered at carrier frequency
-    h, w = interferogram.shape
-    y, x = np.ogrid[:h, :w]
-    center_y, center_x = h // 2, w // 2
+    # Band-pass by multiplying with gaussian
+    F_filtered = F * gauss
 
-    # Gaussian bandpass filter
-    fx, fy = carrier_frequency
-    bandpass = np.exp(-((x - (center_x + fx))**2 + (y - (center_y + fy))**2) / (2 * filter_sigma**2))
+    # Bring back and inverse FFT
+    F_ishift = ifftshift(F_filtered)
+    complex_field = ifft2(F_ishift)
 
-    # 4. Apply filter
-    filtered_fft = fft_shifted * bandpass
+    phase_wrapped = np.angle(complex_field)
 
-    # 5. Shift back and inverse FFT
-    filtered_fft = np.fft.ifftshift(filtered_fft)
-    complex_field = np.fft.ifft2(filtered_fft)
+    print(f"\nTakeda Phase Extraction Debug:")
+    print(f"  Sideband peak position: ({pk_x}, {pk_y})")
+    print(f"  Filter sigma: {sigma} pixels")
 
-    # 6. Extract phase
-    wrapped_phase = np.arctan2(complex_field.imag, complex_field.real)
-
-    # Apply mask to phase
-    if mask is not None:
-        wrapped_phase = wrapped_phase * mask
-
-    return wrapped_phase, fft_shifted
+    return phase_wrapped, F
 
 
 def get_fft_spectrum(image: np.ndarray, log_scale: bool = True) -> np.ndarray:
@@ -88,9 +89,8 @@ def get_fft_spectrum(image: np.ndarray, log_scale: bool = True) -> np.ndarray:
     Returns:
         FFT magnitude spectrum
     """
-    fft = np.fft.fft2(image)
-    fft_shifted = np.fft.fftshift(fft)
-    magnitude = np.abs(fft_shifted)
+    fft_result = fftshift(fft2(image))
+    magnitude = np.abs(fft_result)
 
     if log_scale:
         magnitude = np.log(1 + magnitude)
@@ -120,10 +120,9 @@ def find_carrier_frequency(
     if mask is not None:
         img = img * mask
 
-    # FFT
-    fft = np.fft.fft2(img)
-    fft_shifted = np.fft.fftshift(fft)
-    magnitude = np.abs(fft_shifted)
+    # FFT using scipy
+    fft_result = fftshift(fft2(img))
+    magnitude = np.abs(fft_result)
 
     # Mask DC component
     h, w = magnitude.shape

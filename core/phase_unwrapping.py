@@ -16,51 +16,67 @@ def unwrap_phase_quality_guided(
 
     Args:
         wrapped_phase: Wrapped phase in range [-π, π]
-        mask: Binary mask defining valid region
+        mask: Binary mask defining valid region (optional)
 
     Returns:
-        unwrapped_phase: Continuous phase
+        unwrapped_phase: Continuous phase (NaN outside mask)
         quality_map: Quality metric for each pixel
     """
+    # Determine valid regions from mask
+    if mask is not None:
+        mask_bool = mask.astype(bool)
+    else:
+        # If no mask provided, use all non-NaN values
+        mask_bool = ~np.isnan(wrapped_phase)
+
+    # Use wrapped_phase directly (already has values everywhere)
+    wrapped_filled = wrapped_phase
+
+    # Debug: Check wrapped phase statistics
+    print(f"\nPhase Unwrapping Debug:")
+    if np.any(mask_bool):
+        valid_wrapped = wrapped_phase[mask_bool]
+        valid_wrapped = valid_wrapped[~np.isnan(valid_wrapped)]
+        if len(valid_wrapped) > 0:
+            print(f"  Wrapped range: {np.min(valid_wrapped):.4f} to {np.max(valid_wrapped):.4f} rad")
+            print(f"  Wrapped mean: {np.mean(valid_wrapped):.4f} rad")
+            print(f"  Valid pixels: {len(valid_wrapped)}")
+            # Check for phase jumps
+            sorted_phase = np.sort(valid_wrapped)
+            phase_diff = np.diff(sorted_phase)
+            max_jump = np.max(phase_diff)
+            print(f"  Max phase jump: {max_jump:.4f} rad ({max_jump/np.pi:.2f}*pi)")
+
+    # Try using scikit-image unwrap_phase (quality-guided)
+    try:
+        unwrapped = unwrap_phase(wrapped_filled)
+        print(f"  Using scikit-image unwrap_phase")
+    except Exception as e:
+        print(f"  scikit-image unwrap failed: {e}, trying numpy unwrap")
+        # Fallback to numpy unwrap (row-by-row then column-by-column)
+        unwrapped = np.copy(wrapped_filled)
+
+        # Unwrap along rows first
+        for i in range(unwrapped.shape[0]):
+            unwrapped[i, :] = np.unwrap(unwrapped[i, :])
+
+        # Then unwrap along columns
+        for j in range(unwrapped.shape[1]):
+            unwrapped[:, j] = np.unwrap(unwrapped[:, j])
+
+    # Debug: Check unwrapped phase statistics
+    if np.any(mask_bool):
+        valid_unwrapped = unwrapped[mask_bool]
+        valid_unwrapped = valid_unwrapped[~np.isnan(valid_unwrapped)]
+        if len(valid_unwrapped) > 0:
+            print(f"  Unwrapped range: {np.min(valid_unwrapped):.4f} to {np.max(valid_unwrapped):.4f} rad")
+            print(f"  Unwrapped span: {np.ptp(valid_unwrapped):.4f} rad ({np.ptp(valid_unwrapped)/(2*np.pi):.2f} waves)")
+
+    # Set invalid regions back to NaN after unwrapping
+    unwrapped[~mask_bool] = np.nan
+
     # Calculate quality map
     quality_map = calculate_phase_quality(wrapped_phase)
-
-    # Unwrap using scikit-image
-    if mask is not None:
-        # Don't set masked region to 0 - this creates artificial discontinuities!
-        # Instead, use the mask parameter of unwrap_phase if available,
-        # or extrapolate into masked regions
-        from scipy.ndimage import binary_erosion, binary_dilation
-
-        # Create a slightly eroded mask to avoid edge issues
-        mask_bool = mask.astype(bool)
-
-        # Fill masked regions with extrapolated values instead of 0
-        # This helps the unwrapping algorithm work correctly
-        wrapped_filled = np.copy(wrapped_phase)
-
-        # Simple inpainting: dilate valid region and copy border values
-        if not np.all(mask_bool):
-            # Get the mean phase in valid region as fallback
-            mean_phase = np.mean(wrapped_phase[mask_bool])
-            wrapped_filled[~mask_bool] = mean_phase
-
-        # Debug: Check wrapped phase statistics
-        print(f"\nPhase Unwrapping Debug:")
-        print(f"  Wrapped range: {np.min(wrapped_phase[mask_bool]):.4f} to {np.max(wrapped_phase[mask_bool]):.4f} rad")
-        print(f"  Wrapped mean: {np.mean(wrapped_phase[mask_bool]):.4f} rad")
-
-        # Unwrap the filled phase
-        unwrapped = unwrap_phase(wrapped_filled)
-
-        # Debug: Check unwrapped phase statistics
-        print(f"  Unwrapped range: {np.nanmin(unwrapped[mask_bool]):.4f} to {np.nanmax(unwrapped[mask_bool]):.4f} rad")
-        print(f"  Unwrapped span: {np.ptp(unwrapped[mask_bool]):.4f} rad ({np.ptp(unwrapped[mask_bool])/(2*np.pi):.2f} waves)")
-
-        # Set invalid regions to NaN after unwrapping
-        unwrapped[~mask_bool] = np.nan
-    else:
-        unwrapped = unwrap_phase(wrapped_phase)
 
     return unwrapped, quality_map
 
@@ -71,13 +87,16 @@ def calculate_phase_quality(wrapped_phase: np.ndarray) -> np.ndarray:
     High quality = low variance in local neighborhood.
 
     Args:
-        wrapped_phase: Wrapped phase array
+        wrapped_phase: Wrapped phase array (may contain NaN)
 
     Returns:
         Quality map (higher = better quality)
     """
+    # Replace NaN with 0 for gradient calculation
+    phase_clean = np.nan_to_num(wrapped_phase, nan=0.0)
+
     # Calculate phase derivatives
-    dy, dx = np.gradient(wrapped_phase)
+    dy, dx = np.gradient(phase_clean)
 
     # Wrap derivatives to [-π, π]
     dy = np.arctan2(np.sin(dy), np.cos(dy))
@@ -89,6 +108,9 @@ def calculate_phase_quality(wrapped_phase: np.ndarray) -> np.ndarray:
 
     # Quality metric (lower variance = higher quality)
     quality = 1.0 / (1.0 + d2x**2 + d2y**2)
+
+    # Set quality to 0 where phase is NaN
+    quality[np.isnan(wrapped_phase)] = 0.0
 
     return quality
 
@@ -155,7 +177,15 @@ def phase_to_wavefront(
     wavelength: float = 632.8e-9
 ) -> np.ndarray:
     """
-    Convert phase (radians) to wavefront (meters).
+    Convert phase (radians) to optical path difference (meters).
+
+    The relationship between OPD and phase is:
+        phi = 2*pi*OPD / lambda
+    Solving for OPD:
+        OPD = phi * lambda / (2*pi)
+
+    For reflective interferometry, OPD = 2*h where h is surface height.
+    For transmissive interferometry, OPD = h directly.
 
     Args:
         unwrapped_phase: Unwrapped phase in radians
@@ -173,7 +203,10 @@ def wavefront_to_phase(
     wavelength: float = 632.8e-9
 ) -> np.ndarray:
     """
-    Convert wavefront (meters) to phase (radians).
+    Convert optical path difference (meters) to phase (radians).
+
+    The relationship is:
+        phi = 2*pi*OPD / lambda
 
     Args:
         wavefront: Optical path difference in meters

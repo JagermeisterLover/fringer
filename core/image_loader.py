@@ -3,7 +3,7 @@ Image loading and validation for interferogram analysis.
 """
 
 import numpy as np
-import cv2
+from PIL import Image
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -11,6 +11,8 @@ from typing import Optional, Tuple
 def load_image(filepath: str) -> Optional[np.ndarray]:
     """
     Load an image file and convert to grayscale if needed.
+
+    Uses PIL (same as test scripts) to ensure consistent results.
 
     Args:
         filepath: Path to the image file
@@ -25,25 +27,11 @@ def load_image(filepath: str) -> Optional[np.ndarray]:
             print(f"Error: File does not exist: {filepath}")
             return None
 
-        # Load image
-        image = cv2.imread(str(filepath), cv2.IMREAD_UNCHANGED)
+        # Load image using PIL (same as test scripts)
+        img = Image.open(str(filepath)).convert('L')
 
-        if image is None:
-            print(f"Error: Failed to load image: {filepath}")
-            return None
-
-        # Convert to grayscale if needed
-        if len(image.shape) == 3:
-            if image.shape[2] == 3:  # BGR
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            elif image.shape[2] == 4:  # BGRA
-                image = cv2.cvtColor(image, cv2.COLOR_BGRA2GRAY)
-
-        # Convert to uint8 if needed
-        if image.dtype == np.uint16:
-            image = (image / 256).astype(np.uint8)
-        elif image.dtype == np.float32 or image.dtype == np.float64:
-            image = (image * 255).astype(np.uint8)
+        # Convert to numpy array
+        image = np.array(img).astype(np.uint8)
 
         return image
 
